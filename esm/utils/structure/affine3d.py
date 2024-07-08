@@ -155,7 +155,8 @@ class RotationMatrix(Rotation):
     ) -> RotationMatrix:
         # A low eps here is necessary for good stability!
         return RotationMatrix(
-            maybe_compile(_graham_schmidt, x_axis)(x_axis, xy_plane, eps)
+            _graham_schmidt(x_axis, xy_plane, eps)
+            # maybe_compile(_graham_schmidt, x_axis)(x_axis, xy_plane, eps)
         )
 
 
@@ -169,7 +170,7 @@ class Affine3D:
 
     @staticmethod
     def identity(
-        shape_or_affine: T.Union[tuple[int, ...], "Affine3D"],
+        shape_or_affine: T.Union[tuple[int, ...], Affine3D],
         rotation_type: T.Type[Rotation] = RotationMatrix,
         **tensor_kwargs,
     ):
@@ -193,13 +194,13 @@ class Affine3D:
         std: float = 1,
         rotation_type: T.Type[Rotation] = RotationMatrix,
         **tensor_kwargs,
-    ) -> "Affine3D":
+    ) -> Affine3D:
         return Affine3D(
             trans=torch.randn((*shape, 3), **tensor_kwargs).mul(std),
             rot=rotation_type.random(shape, **tensor_kwargs),
         )
 
-    def __getitem__(self, idx: T.Any) -> "Affine3D":
+    def __getitem__(self, idx: T.Any) -> Affine3D:
         indices = (idx,) if isinstance(idx, int) or idx is None else tuple(idx)
         return Affine3D(
             trans=self.trans[indices + (slice(None),)],
@@ -222,13 +223,13 @@ class Affine3D:
     def requires_grad(self) -> bool:
         return self.trans.requires_grad
 
-    def to(self, **kwargs) -> "Affine3D":
+    def to(self, **kwargs) -> Affine3D:
         return Affine3D(self.trans.to(**kwargs), self.rot.to(**kwargs))
 
-    def detach(self, *args, **kwargs) -> "Affine3D":
+    def detach(self, *args, **kwargs) -> Affine3D:
         return Affine3D(self.trans.detach(**kwargs), self.rot.detach(**kwargs))
 
-    def tensor_apply(self, func) -> "Affine3D":
+    def tensor_apply(self, func) -> Affine3D:
         # Applys a function to the underlying tensor
         return self.from_tensor(
             torch.stack([func(x) for x in self.tensor.unbind(dim=-1)], dim=-1)
@@ -237,7 +238,7 @@ class Affine3D:
     def as_matrix(self):
         return Affine3D(trans=self.trans, rot=self.rot.as_matrix())
 
-    def compose(self, other: "Affine3D", autoconvert: bool = False):
+    def compose(self, other: Affine3D, autoconvert: bool = False):
         rot = self.rot
         new_rot = (rot.convert_compose if autoconvert else rot.compose)(other.rot)
         new_trans = rot.apply(other.trans) + self.trans
@@ -280,15 +281,16 @@ class Affine3D:
         return torch.cat([self.rot.tensor, self.trans], dim=-1)
 
     @staticmethod
-    def from_tensor(t: torch.Tensor) -> "Affine3D":
+    def from_tensor(t: torch.Tensor) -> Affine3D:
         match t.shape[-1]:
             case 4:
                 # Assume tensor 4x4 for backward compat with alphafold
-                trans = t[..., :3, 3]
-                rot = RotationMatrix(t[..., :3, :3])
+                trans = t[:, :3, 3]
+                rot = RotationMatrix(t[:, :3, :3])
             case 12:
-                trans = t[..., -3:]
-                rot = RotationMatrix(t[..., :-3].unflatten(-1, (3, 3)))
+                r = t[:, :, :9].reshape(t.shape[0], t.shape[1], 3, 3)
+                trans = t[:, :, 9:]
+                rot = RotationMatrix(r)
             case _:
                 raise RuntimeError(
                     f"Cannot detect rotation fromat from {t.shape[-1] -3}-d flat vector"
@@ -296,7 +298,7 @@ class Affine3D:
         return Affine3D(trans, rot)
 
     @staticmethod
-    def from_tensor_pair(t: torch.Tensor, r: torch.Tensor) -> "Affine3D":
+    def from_tensor_pair(t: torch.Tensor, r: torch.Tensor) -> Affine3D:
         return Affine3D(t, RotationMatrix(r))
 
     @staticmethod
@@ -305,16 +307,15 @@ class Affine3D:
         origin: torch.Tensor,
         xy_plane: torch.Tensor,
         eps: float = 1e-10,
-    ):
+    ) -> Affine3D:
         # The arguments of this function is for parity with AlphaFold
         x_axis = origin - neg_x_axis
         xy_plane = xy_plane - origin
-        return Affine3D(
-            trans=origin, rot=RotationMatrix.from_graham_schmidt(x_axis, xy_plane, eps)
-        )
+        rot = RotationMatrix.from_graham_schmidt(x_axis, xy_plane, eps)
+        return Affine3D(origin, rot)
 
     @staticmethod
-    def cat(affines: list["Affine3D"], dim: int = 0):
+    def cat(affines: list[Affine3D], dim: int = 0):
         if dim < 0:
             dim = len(affines[0].shape) + dim
         return Affine3D.from_tensor(torch.cat([x.tensor for x in affines], dim=dim))
@@ -351,13 +352,14 @@ def build_affine3d_from_coordinates(
         N, CA, C = bb_positions.unbind(dim=-2)
         return Affine3D.from_graham_schmidt(C, CA, N)
 
-    coords = coords.clone().float()
-    coords[~coord_mask] = 0
-
+    # coords1 = coords.clone().float()
+    # coords1[~coord_mask] = .0
+    coords = coords.float().masked_fill(~coord_mask[..., None, None], .0)
+    
     # NOTE(thayes): If you have already normalized the coordinates, then
     # the black hole affine translations will be zeros and the rotations will be
     # the identity.
-    average_per_n_ca_c = coords.masked_fill(~coord_mask[..., None, None], 0).sum(1) / (
+    average_per_n_ca_c = coords.sum(1) / (
         coord_mask.sum(-1)[..., None, None] + 1e-8
     )
     affine_from_average = atom3_to_backbone_affine(
@@ -365,8 +367,8 @@ def build_affine3d_from_coordinates(
     ).as_matrix()
 
     B, S, _, _ = coords.shape
-    assert isinstance(B, int)
-    assert isinstance(S, int)
+    #assert isinstance(B, int)
+    #assert isinstance(S, int)
     affine_rot_mats = affine_from_average.rot.tensor[..., None, :].expand(B, S, 9)
     affine_trans = affine_from_average.trans[..., None, :].expand(B, S, 3)
 

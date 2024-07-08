@@ -37,11 +37,17 @@ class MultiHeadAttention(nn.Module):
         self.rotary = RotaryEmbedding(d_model // n_heads)
 
     def _apply_rotary(self, q: torch.Tensor, k: torch.Tensor):
-        q = q.unflatten(-1, (self.n_heads, self.d_head))
-        k = k.unflatten(-1, (self.n_heads, self.d_head))
+        q_shape=q.shape
+        k_shape=k.shape
+        q = q.reshape(q_shape[0], q_shape[1], self.n_heads, self.d_head)
+        k = k.reshape(k_shape[0], k_shape[1], self.n_heads, self.d_head)
+        #q = q.unflatten(-1, (self.n_heads, self.d_head))
+        #k = k.unflatten(-1, (self.n_heads, self.d_head))
         q, k = self.rotary(q, k)
-        q = q.flatten(-2, -1)
-        k = k.flatten(-2, -1)
+        #q = q.flatten(-2, -1)
+        #k = k.flatten(-2, -1)
+        q = q.reshape(q_shape)
+        k = k.reshape(k_shape)
         return q, k
 
     def forward(self, x, seq_id):

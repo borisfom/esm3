@@ -262,7 +262,22 @@ class ESM3(nn.Module, ESM3InferenceClient):
 
         return load_local_model(model_name, device=next(self.parameters()).device)
 
-    def forward(
+    def forward(self, *args, **kwargs) -> ESMOutput:
+        """
+        Performs forward pass through the ESM3 model. See _forward_pre() for actual args.
+
+        Returns:
+            ESMOutput: The output of the ESM3 model.
+
+        Raises:
+            ValueError: If at least one of the inputs is None.
+
+        """
+        inputs = self._forward_pre(*args, **kwargs)
+        x, embedding = self.transformer(*inputs)
+        return self.output_heads(x, embedding)
+
+    def _forward_pre(
         self,
         *,
         sequence_tokens: torch.Tensor | None = None,
@@ -276,9 +291,10 @@ class ESM3(nn.Module, ESM3InferenceClient):
         structure_coords: torch.Tensor | None = None,
         chain_id: torch.Tensor | None = None,
         sequence_id: torch.Tensor | None = None,
-    ) -> ESMOutput:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Performs forward pass through the ESM3 model. Check utils to see how to tokenize inputs from raw data.
+        Performs pre-procession part of the forward pass through the ESM3 model. 
+        Check utils to see how to tokenize inputs from raw data.
 
         Args:
             sequence_tokens (torch.Tensor, optional): The amino acid tokens.
@@ -379,8 +395,7 @@ class ESM3(nn.Module, ESM3InferenceClient):
             function_tokens,
             residue_annotation_tokens,
         )
-        x, embedding = self.transformer(x, sequence_id, affine, affine_mask, chain_id)
-        return self.output_heads(x, embedding)
+        return x, sequence_id, affine.tensor, affine_mask, chain_id
 
     # The following methods are for the ESM3InferenceClient interface
     def generate(self, input: ProteinType, config: GenerationConfig) -> ProteinType:

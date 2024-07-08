@@ -254,7 +254,7 @@ class StructureTokenEncoder(nn.Module):
         z, _ = self.transformer.forward(
             x=z,
             sequence_id=knn_sequence_id,
-            affine=affine,
+            affine=affine.tensor,
             affine_mask=knn_affine_mask,
             chain_id=knn_chain_id,
         )
@@ -276,8 +276,9 @@ class StructureTokenEncoder(nn.Module):
     ) -> tuple:
         assert knn is not None, "Must specify a non-null knn to find_knn_edges"
         # Coords are N, CA, C
-        coords = coords.clone()
-        coords[~coord_mask] = 0
+        # coords = coords.clone()
+        # coords[~coord_mask] = 0
+        coords = coords.float().masked_fill(~coord_mask[..., None, None], .0)
 
         if sequence_id is None:
             sequence_id = torch.zeros(
@@ -418,8 +419,8 @@ class StructureTokenDecoder(nn.Module):
         pae, ptm = None, None
         pairwise_logits = self.pairwise_classification_head(x)
         _, _, pae_logits = [
-            (o if o.numel() > 0 else None)
-            for o in pairwise_logits.split(self.pairwise_bins, dim=-1)
+            # (o if o.numel() > 0 else None)
+            o for o in pairwise_logits.split(self.pairwise_bins, dim=-1)
         ]
 
         special_tokens_mask = structure_tokens >= min(self.special_tokens.values())

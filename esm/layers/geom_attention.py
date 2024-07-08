@@ -5,6 +5,19 @@ from einops import rearrange
 from torch import nn
 from torch.nn import functional as F
 
+@torch.jit.script
+def adjust_weight(attn_weight, attn_bias):
+            # we can re-use the attention bias from the transformer layers
+            # NOTE(thayes): This attention bias is expected to handle two things:
+            # 1. Masking attention on padding tokens
+            # 2. Masking cross sequence attention in the case of bin packing
+            s_q = attn_weight.size(2)
+            s_k = attn_weight.size(3)
+            _s_q = max(0, attn_bias.size(2) - s_q)
+            _s_k = max(0, attn_bias.size(3) - s_k)
+            attn_bias = attn_bias[:, :, _s_q:, _s_k:]
+            attn_weight = attn_weight + attn_bias
+            return attn_weight
 
 class GeometricReasoningOriginalImpl(nn.Module):
     def __init__(
@@ -116,17 +129,8 @@ class GeometricReasoningOriginalImpl(nn.Module):
         )
 
         if attn_bias is not None:
-            # we can re-use the attention bias from the transformer layers
-            # NOTE(thayes): This attention bias is expected to handle two things:
-            # 1. Masking attention on padding tokens
-            # 2. Masking cross sequence attention in the case of bin packing
-            s_q = attn_weight.size(2)
-            s_k = attn_weight.size(3)
-            _s_q = max(0, attn_bias.size(2) - s_q)
-            _s_k = max(0, attn_bias.size(3) - s_k)
-            attn_bias = attn_bias[:, :, _s_q:, _s_k:]
-            attn_weight = attn_weight + attn_bias
-
+            attn_weight=adjust_weight(attn_weight, attn_bias)
+            
         attn_weight = torch.softmax(attn_weight, dim=-1)
 
         attn_out = attn_weight.matmul(value)

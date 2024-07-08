@@ -63,7 +63,7 @@ class TransformerStack(nn.Module):
         self,
         x: torch.Tensor,
         sequence_id: torch.Tensor | None = None,
-        affine: Affine3D | None = None,
+        affine: torch.Tensor | None = None,
         affine_mask: torch.Tensor | None = None,
         chain_id: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -73,7 +73,7 @@ class TransformerStack(nn.Module):
         Args:
             x (torch.Tensor): The input tensor of shape (batch_size, sequence_length, d_model).
             sequence_id (torch.Tensor): The sequence ID tensor of shape (batch_size, sequence_length).
-            affine (Affine3D | None): The affine transformation tensor or None.
+            affine (torch.Tensor | None): The affine transformation tensor or None.
             affine_mask (torch.Tensor | None): The affine mask tensor or None.
             chain_id (torch.Tensor): The protein chain tensor of shape (batch_size, sequence_length).
                 Only used in geometric attention.
@@ -90,5 +90,5 @@ class TransformerStack(nn.Module):
         if chain_id is None:
             chain_id = torch.ones(size=batch_dims, dtype=torch.int64, device=x.device)
         for block in self.blocks:
-            x = block(x, sequence_id, affine, affine_mask, chain_id)
+            x = block(x, sequence_id, Affine3D.from_tensor(affine), affine_mask, chain_id)
         return self.norm(x), x
